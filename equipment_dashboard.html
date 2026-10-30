@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>설비 상태 모니터</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: 관제실 1화면 — 상단 상태바 → KPI → 선택 설비(게이지·건강지수) → 추세 → 설비 목록·이벤트 */
+:root{
+  --bg:#0f161d; --panel:#151f29; --panel2:#1a2632; --line:#263441;
+  --fg:#dbe3ea; --muted:#8a99a6; --accent:#5aa9e6;
+  --ok:#3bb273; --warn:#e0a526; --alarm:#e5484d; --idle:#6f7f8d;
+  --sans:"IBM Plex Sans KR",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px}
+.wrap{max-width:1440px;margin:0 auto;padding-block:16px 32px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:14px}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;min-width:0}
+.ph{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.ph h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--muted)}
+.ph small{color:var(--muted);font-size:12px}
+
+/* 상단 바 */
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
+.brand{display:flex;flex-direction:column;gap:2px;margin-right:auto}
+.brand h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+.brand span{color:var(--muted);font-size:12px}
+.ctrls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{background:transparent;color:var(--muted);border:0;padding:7px 12px;font:inherit;font-size:13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#0b1520;font-weight:600}
+select,.btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:7px 10px;font:inherit;font-size:13px;cursor:pointer}
+.btn:hover,select:hover,.seg button:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.src{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:999px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--idle);flex:none}
+.dot.ok{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.dot.warn{background:var(--warn)} .dot.alarm{background:var(--alarm)}
+@media (prefers-reduced-motion:no-preference){.dot.live{animation:pulse 1.6s infinite}}
+@keyframes pulse{50%{opacity:.35}}
+.banner{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;background:color-mix(in srgb,var(--warn) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 45%,var(--line));border-radius:6px;padding:10px 14px;font-size:13px}
+
+/* KPI */
+.kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;display:grid;gap:4px;min-width:0}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi .v{font-size:24px;font-weight:600;line-height:1.15}
+.kpi .s{font-size:12px;color:var(--muted)}
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--accent)}
+
+/* 설비 선택 */
+.equips{display:flex;flex-wrap:wrap;gap:8px}
+.eq{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 12px;cursor:pointer;color:var(--fg);font:inherit;text-align:left}
+.eq[aria-pressed="true"]{border-color:var(--accent);background:var(--panel2)}
+.eq b{font-family:var(--mono);font-size:14px}
+.eq span{font-size:12px;color:var(--muted)}
+
+/* 메인 그리드 */
+.main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);gap:14px}
+.gauges{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.g{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 10px 12px;display:grid;justify-items:center;gap:2px;min-width:0;border-top:3px solid var(--ok)}
+.g.l1{border-top-color:var(--warn)} .g.l2{border-top-color:var(--alarm)}
+.g .t{font-size:12px;color:var(--muted);justify-self:stretch;display:flex;justify-content:space-between}
+.g svg{width:100%;max-width:150px;height:auto}
+.g .v{font-size:22px;font-weight:600;margin-top:-22px}
+.g .u{font-size:11px;color:var(--muted)}
+.g .z{font-size:11px;color:var(--muted);margin-top:4px}
+.g .z.hot{color:var(--warn)}
+.health{display:grid;justify-items:center;gap:6px}
+.health svg{width:150px;height:150px}
+.statusbig{font-size:13px;padding:4px 10px;border-radius:999px;font-weight:600}
+.strip{display:flex;height:16px;border-radius:3px;overflow:hidden;width:100%;background:var(--line)}
+.strip i{flex:1}
+.legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+/* 추세 */
+.trends{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:10px}
+.tr{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:10px 12px 6px;min-width:0}
+.tr .h{display:flex;justify-content:space-between;font-size:12px;color:var(--muted)}
+.tr .h b{color:var(--fg);font-weight:600}
+.tr svg{display:block;width:100%;height:130px}
+
+/* 하단 */
+.bottom{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:12px}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--panel2)}
+.c1{color:var(--warn)} .c2{color:var(--alarm);font-weight:600}
+.pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+.log{display:grid;gap:0;max-height:330px;overflow:auto;font-size:13px}
+.log div{display:grid;grid-template-columns:auto auto 1fr;gap:10px;padding:7px 2px;border-bottom:1px solid var(--line);align-items:center}
+.log time{color:var(--muted);font-size:12px}
+.log .empty{display:block;color:var(--muted);padding:14px 2px}
+.foot{color:var(--muted);font-size:12px;line-height:1.6}
+
+@media (max-width:1100px){.main,.bottom{grid-template-columns:minmax(0,1fr)}.gauges{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:640px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.gauges{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi .v{font-size:20px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <h1>설비 상태 모니터</h1>
+      <span>온도 · 진동 · 압력 · 전류 · 회전수 실시간 감시</span>
+    </div>
+    <div class="ctrls">
+      <span class="src" id="src"><i class="dot" id="srcDot"></i><span id="srcText">연결 중…</span></span>
+      <div class="seg" role="group" aria-label="표시 모드">
+        <button id="mLive" aria-pressed="false">최신값</button>
+        <button id="mPlay" aria-pressed="true">기록 재생</button>
+      </div>
+      <button class="btn" id="btnPause">일시정지</button>
+      <select id="speed" aria-label="재생 속도">
+        <option value="1">×1 (1분/초)</option>
+        <option value="5" selected>×5</option>
+        <option value="20">×20</option>
+      </select>
+      <select id="win" aria-label="표시 구간">
+        <option value="60">최근 60분</option>
+        <option value="120" selected>최근 120분</option>
+        <option value="360">최근 6시간</option>
+      </select>
+      <select id="refresh" aria-label="시트 갱신 주기">
+        <option value="10">시트 갱신 10초</option>
+        <option value="30" selected>시트 갱신 30초</option>
+        <option value="60">시트 갱신 60초</option>
+      </select>
+      <label class="btn" for="file">CSV 열기</label>
+      <input type="file" id="file" accept=".csv,text/csv" hidden>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden>
+    <span id="bannerText"></span>
+    <button class="btn" id="btnRetry">다시 연결</button>
+  </div>
+
+  <section class="kpis" aria-label="요약 지표">
+    <div class="kpi"><span class="l">가동 설비</span><span class="v num" id="kRun">–</span><div class="bar"><i id="kRunBar" style="width:0"></i></div></div>
+    <div class="kpi"><span class="l">현재 경보 · 주의</span><span class="v num" id="kAlarm">–</span><span class="s" id="kAlarmS">–</span></div>
+    <div class="kpi"><span class="l">평균 건강지수</span><span class="v num" id="kHealth">–</span><div class="bar"><i id="kHealthBar" style="width:0"></i></div></div>
+    <div class="kpi"><span class="l">최고 진동</span><span class="v num" id="kVib">–</span><span class="s" id="kVibS">–</span></div>
+    <div class="kpi"><span class="l">기준 시각</span><span class="v num" id="kTime" style="font-size:18px">–</span><span class="s" id="kTimeS">–</span></div>
+  </section>
+
+  <nav class="equips" id="equips" aria-label="설비 선택"></nav>
+
+  <section class="main">
+    <div class="panel">
+      <div class="ph"><h2 id="selTitle">설비 계측값</h2><small id="selTime">–</small></div>
+      <div class="gauges" id="gauges"></div>
+    </div>
+    <div class="panel health">
+      <div class="ph" style="justify-self:stretch"><h2>건강지수 · 상태</h2><small id="winLabel">–</small></div>
+      <svg viewBox="0 0 150 150" id="ring" aria-label="건강지수"></svg>
+      <span class="statusbig" id="statusBig">–</span>
+      <div style="justify-self:stretch;display:grid;gap:6px;margin-top:6px">
+        <small style="color:var(--muted);font-size:12px">상태 이력 (표시 구간)</small>
+        <div class="strip" id="strip"></div>
+        <div class="legend"><span><i style="background:var(--ok)"></i>정상 가동</span><span><i style="background:var(--warn)"></i>주의</span><span><i style="background:var(--alarm)"></i>경보·이상</span><span><i style="background:var(--idle)"></i>대기·정지</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ph"><h2>추세</h2><small>점선: 주의 기준 · 실선: 경보 기준</small></div>
+    <div class="trends" id="trends"></div>
+  </section>
+
+  <section class="bottom">
+    <div class="panel">
+      <div class="ph"><h2>전체 설비 현황</h2><small>행을 누르면 해당 설비로 이동</small></div>
+      <div class="tbl"><table>
+        <thead><tr><th>설비</th><th>상태</th><th>온도 °C</th><th>진동 mm/s</th><th>압력 bar</th><th>전류 A</th><th>회전수 rpm</th><th>건강</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
+      <div class="ph"><h2>이벤트 로그</h2><small>표시 구간 내 기준 초과·상태 변경</small></div>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+
+  <p class="foot">기준값(주의/경보)은 일반적인 펌프·모터 운전 범위를 가정한 값입니다. 현장 설비 사양에 맞게 스크립트 상단 <span class="num">CONFIG.METRICS</span>에서 조정하세요. σ는 표시 구간 평균 대비 현재값의 표준편차 배수이며, |σ| ≥ 3이면 통계적 이상으로 표시합니다.</p>
+</div>
+
+<script>
+/* ===== 설정 ===== */
+const CONFIG = {
+  CSV_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRAB2S1Dyz0KPQZZVHUyZ_fEvZ9xzSf7IrBaHVP9ouaD4e9yz-DKF0yunPj7HKiNyfK_rX7lRfnK3L5/pub?output=csv',
+  METRICS: {
+    temp:     {label:'온도',   unit:'°C',   min:20,   max:90,   hi:{warn:60,  alarm:70},   dec:1},
+    vib:      {label:'진동',   unit:'mm/s', min:0,    max:8,    hi:{warn:2.8, alarm:4.5},  dec:2},
+    pressure: {label:'압력',   unit:'bar',  min:5,    max:9,    lo:{warn:6.5, alarm:6.0}, hi:{warn:7.6, alarm:8.0}, dec:2},
+    current:  {label:'전류',   unit:'A',    min:0,    max:40,   hi:{warn:27,  alarm:30},   dec:1},
+    rpm:      {label:'회전수', unit:'rpm',  min:1500, max:1900, lo:{warn:1650,alarm:1600}, hi:{warn:1750, alarm:1800}, dec:0}
+  },
+  STATUS: { // 상태 코드 → 표시
+    RUN:{k:'ok',t:'가동'}, RUNNING:{k:'ok',t:'가동'}, NORMAL:{k:'ok',t:'정상'},
+    IDLE:{k:'idle',t:'대기'}, STOP:{k:'idle',t:'정지'}, STOPPED:{k:'idle',t:'정지'}, OFF:{k:'idle',t:'정지'},
+    WARN:{k:'warn',t:'주의'}, WARNING:{k:'warn',t:'주의'},
+    ALARM:{k:'alarm',t:'경보'}, FAULT:{k:'alarm',t:'고장'}, ERROR:{k:'alarm',t:'이상'}, ALM:{k:'alarm',t:'경보'}, DOWN:{k:'alarm',t:'고장'}
+  }
+};
+const KEYS = Object.keys(CONFIG.METRICS);
+
+/* 예시 데이터: 시트 연결이 안 될 때만 사용 (시트에서 받은 P-01 0:00~1:38) */
+const SAMPLE = `timestamp,equip_id,temp,vib,pressure,current,rpm,status
+2026-03-01 0:00,P-01,51.25,1.906,7.127,23.72,1702.3,RUN
+2026-03-01 0:01,P-01,51.31,2.143,7.172,23.66,1691.5,RUN
+2026-03-01 0:02,P-01,52.12,2.111,7.216,23.9,1696.6,RUN
+2026-03-01 0:03,P-01,51.72,1.856,7.175,24.27,1709,RUN
+2026-03-01 0:04,P-01,51.14,1.893,6.997,24.66,1700.9,RUN
+2026-03-01 0:05,P-01,50.79,2.057,7.082,23.87,1698,RUN
+2026-03-01 0:06,P-01,52.16,1.886,7.114,24.09,1697.1,RUN
+2026-03-01 0:07,P-01,51.55,1.856,7.028,23.88,1699.8,RUN
+2026-03-01 0:08,P-01,51.6,1.875,7.144,24.01,1698.3,RUN
+2026-03-01 0:09,P-01,51.67,1.945,7.024,23.73,1690.3,RUN
+2026-03-01 0:10,P-01,51.88,2.208,7.108,24.06,1707.1,RUN
+2026-03-01 0:11,P-01,51.31,1.889,6.926,23.52,1698,RUN
+2026-03-01 0:12,P-01,51.18,1.961,7.305,23.75,1696.5,RUN
+2026-03-01 0:13,P-01,51.15,2.02,7.201,23.75,1693.8,RUN
+2026-03-01 0:14,P-01,51.22,1.89,7.072,24.36,1693,RUN
+2026-03-01 0:15,P-01,51.58,1.832,7.187,24.35,1697.6,RUN
+2026-03-01 0:16,P-01,51.43,2.018,6.99,24.04,1697.3,RUN
+2026-03-01 0:17,P-01,51.35,2.026,7.177,23.96,1690.4,RUN
+2026-03-01 0:18,P-01,51.54,1.941,7.223,24.24,1693,RUN
+2026-03-01 0:19,P-01,51.72,1.987,7.101,23.92,1687.1,RUN
+2026-03-01 0:20,P-01,51.49,1.982,7.145,23.34,1697.9,RUN
+2026-03-01 0:21,P-01,51.2,2.103,6.969,23.82,1694.9,RUN
+2026-03-01 0:22,P-01,52.51,1.882,7.148,23.75,1686,RUN
+2026-03-01 0:23,P-01,52.31,2.008,6.971,23.02,1689,RUN
+2026-03-01 0:24,P-01,51.78,2.023,6.983,23.56,1690.1,RUN
+2026-03-01 0:25,P-01,51.09,2.12,7.16,23.79,1684.1,RUN
+2026-03-01 0:26,P-01,50.93,2.182,6.971,23.67,1691.5,RUN
+2026-03-01 0:27,P-01,51.37,1.937,6.982,23.71,1687.3,RUN
+2026-03-01 0:28,P-01,52.07,2.089,7.067,24.27,1680.6,RUN
+2026-03-01 0:29,P-01,51.83,1.933,6.893,23.51,1683.3,RUN
+2026-03-01 0:30,P-01,51.59,1.957,6.825,23.39,1683.1,RUN
+2026-03-01 0:31,P-01,51.18,2.043,6.907,23.27,1680.1,RUN
+2026-03-01 0:32,P-01,50.95,2.063,6.987,24,1677.9,RUN
+2026-03-01 0:33,P-01,50.88,2.06,7.048,23.77,1677.6,RUN
+2026-03-01 0:34,P-01,51.64,2.041,6.89,23.54,1676.5,RUN
+2026-03-01 0:35,P-01,51.12,2.034,7.077,23.64,1686.5,RUN
+2026-03-01 0:36,P-01,51.82,1.917,7.046,23.54,1682.1,RUN
+2026-03-01 0:37,P-01,50.92,1.881,7.005,23.31,1675.1,RUN
+2026-03-01 0:38,P-01,51.47,1.982,6.951,23.87,1678.4,RUN
+2026-03-01 0:39,P-01,51.87,1.947,6.925,23.89,1681.8,RUN
+2026-03-01 0:40,P-01,51.13,2.009,6.999,23.8,1683.4,RUN
+2026-03-01 0:41,P-01,51.18,1.873,6.965,23.52,1686.3,RUN
+2026-03-01 0:42,P-01,50.98,1.877,7.057,23.11,1681.9,RUN
+2026-03-01 0:43,P-01,50.6,2.035,6.999,23.61,1686.6,RUN
+2026-03-01 0:44,P-01,50.69,2.194,7.041,23.54,1685.8,RUN
+2026-03-01 0:45,P-01,50.97,2.01,6.954,23.54,1682.4,RUN
+2026-03-01 0:46,P-01,50.51,1.783,6.946,23.48,1680.7,RUN
+2026-03-01 0:47,P-01,50.67,2.079,7.027,23.92,1691.1,RUN
+2026-03-01 0:48,P-01,50.78,1.837,7.04,24.08,1683.6,RUN
+2026-03-01 0:49,P-01,50.42,2.053,6.989,23.77,1683.5,RUN
+2026-03-01 0:50,P-01,51.25,2.095,6.916,23.75,1685.3,RUN
+2026-03-01 0:51,P-01,50.18,1.987,6.987,23.3,1685,RUN
+2026-03-01 0:52,P-01,50.71,2.081,6.919,23.6,1686.4,RUN
+2026-03-01 0:53,P-01,50.12,1.971,7.121,23.49,1684.6,RUN
+2026-03-01 0:54,P-01,50.08,2.171,7.006,23.41,1676.4,RUN
+2026-03-01 0:55,P-01,50.74,2.057,6.941,24.03,1686.2,RUN
+2026-03-01 0:56,P-01,50.87,2.035,7.002,23.9,1678.8,RUN
+2026-03-01 0:57,P-01,50.69,2.162,7.051,23.19,1687.8,RUN
+2026-03-01 0:58,P-01,50.64,2.077,6.918,23.54,1690.6,RUN
+2026-03-01 0:59,P-01,51.82,1.949,7.113,23.16,1687.4,RUN
+2026-03-01 1:00,P-01,51.15,2.136,6.968,24.29,1686.6,RUN
+2026-03-01 1:01,P-01,50.7,2.008,7.083,24.11,1683.3,RUN
+2026-03-01 1:02,P-01,50.64,1.95,6.98,23.78,1682.1,RUN
+2026-03-01 1:03,P-01,50.93,2.169,6.795,23.82,1677.7,RUN
+2026-03-01 1:04,P-01,51.06,1.774,6.968,23.86,1686.5,RUN
+2026-03-01 1:05,P-01,50.42,1.985,7.192,23.5,1687.5,RUN
+2026-03-01 1:06,P-01,50.31,1.97,6.958,23.64,1682.5,RUN
+2026-03-01 1:07,P-01,50.14,1.934,7.01,23.2,1688.9,RUN
+2026-03-01 1:08,P-01,50.77,1.736,7.027,23.94,1687,RUN
+2026-03-01 1:09,P-01,50.95,2.101,6.942,24.15,1683.9,RUN
+2026-03-01 1:10,P-01,51.04,2.049,6.822,23.76,1677.7,RUN
+2026-03-01 1:11,P-01,50.65,1.892,6.964,23.49,1684.4,RUN
+2026-03-01 1:12,P-01,50.58,1.919,6.96,23.83,1681.8,RUN
+2026-03-01 1:13,P-01,50.81,2.156,6.999,23.75,1689.6,RUN
+2026-03-01 1:14,P-01,50.31,2.212,7.011,23.6,1684.6,RUN
+2026-03-01 1:15,P-01,50.69,2.097,7.096,23.84,1681.9,RUN
+2026-03-01 1:16,P-01,50.7,1.914,7.219,23.68,1690.3,RUN
+2026-03-01 1:17,P-01,50.4,1.773,6.979,23.55,1683.4,RUN
+2026-03-01 1:18,P-01,51.04,1.953,7.018,23.66,1681.6,RUN
+2026-03-01 1:19,P-01,50.49,2,7.036,23.26,1683.1,RUN
+2026-03-01 1:20,P-01,50.55,1.97,7.007,23.69,1684.2,RUN
+2026-03-01 1:21,P-01,50.3,1.964,7.088,23.51,1685.4,RUN
+2026-03-01 1:22,P-01,50.51,1.993,7.019,24.02,1682.7,RUN
+2026-03-01 1:23,P-01,50.43,2.036,7.098,24.01,1683.5,RUN
+2026-03-01 1:24,P-01,49.82,1.888,7.069,24.14,1680.6,RUN
+2026-03-01 1:25,P-01,51,1.896,6.978,23.34,1679.4,RUN
+2026-03-01 1:26,P-01,50.45,2.139,6.883,23.64,1683.3,RUN
+2026-03-01 1:27,P-01,50.28,1.929,7.071,24.13,1680.8,RUN
+2026-03-01 1:28,P-01,50.88,2.053,6.928,23.77,1685,RUN
+2026-03-01 1:29,P-01,50.52,2.019,7.105,24,1683.1,RUN
+2026-03-01 1:30,P-01,50.8,1.957,7.059,23.53,1680.1,RUN
+2026-03-01 1:31,P-01,50.43,1.884,7.051,23.35,1683.2,RUN
+2026-03-01 1:32,P-01,50.8,1.929,6.985,23.89,1685.5,RUN
+2026-03-01 1:33,P-01,50.38,1.937,7.024,24.07,1691.6,RUN
+2026-03-01 1:34,P-01,50.96,2.016,6.864,24.31,1686.4,RUN
+2026-03-01 1:35,P-01,50.48,1.938,7.065,23.38,1682.3,RUN
+2026-03-01 1:36,P-01,50.19,1.89,7.096,23.86,1685.7,RUN
+2026-03-01 1:37,P-01,50.85,1.854,7.084,23.67,1678.5,RUN
+2026-03-01 1:38,P-01,51.1,2.003,6.959,23.37,1686.1,RUN`;
+
+/* ===== 상태 ===== */
+const S = {
+  rows: [], byEq: {}, equips: [], times: [], cursor: 0,
+  mode: 'play', paused: false, speed: 5, win: 120, refresh: 30,
+  sel: null, source: 'none', fetchedAt: null
+};
+const $ = id => document.getElementById(id);
+const CV = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COL = {ok:'--ok', warn:'--warn', alarm:'--alarm', idle:'--idle'};
+
+/* ===== CSV 파싱 ===== */
+function parseTime(s){
+  const m = String(s).trim().match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return new Date(+m[1], m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0)).getTime();
+  const t = Date.parse(s); return isNaN(t) ? null : t;
+}
+function splitLine(line){
+  const out=[]; let cur='', q=false;
+  for (const ch of line){
+    if (ch==='"'){ q=!q; continue; }
+    if (ch===',' && !q){ out.push(cur); cur=''; continue; }
+    cur+=ch;
+  }
+  out.push(cur); return out.map(v=>v.trim());
+}
+function parseCSV(text){
+  const lines = text.replace(/\r/g,'').split('\n').filter(l=>l.trim());
+  if (lines.length < 2) throw new Error('데이터 행이 없습니다');
+  const head = splitLine(lines[0]).map(h=>h.toLowerCase());
+  const idx = k => head.indexOf(k);
+  const need = ['timestamp','equip_id',...KEYS,'status'];
+  const miss = need.filter(k=>idx(k)<0);
+  if (miss.length) throw new Error('컬럼 누락: '+miss.join(', '));
+  const rows=[];
+  for (let i=1;i<lines.length;i++){
+    const c = splitLine(lines[i]);
+    const t = parseTime(c[idx('timestamp')]); if (t==null) continue;
+    const r = {t, eq:c[idx('equip_id')]||'-', status:(c[idx('status')]||'').toUpperCase()};
+    for (const k of KEYS){ const v=parseFloat(c[idx(k)]); r[k]=isNaN(v)?null:v; }
+    rows.push(r);
+  }
+  if (!rows.length) throw new Error('유효한 행이 없습니다');
+  rows.sort((a,b)=>a.t-b.t);
+  return rows;
+}
+function load(rows, source){
+  const wasAtEnd = S.times.length && S.cursor >= S.times.length-1;
+  const prevT = S.times[S.cursor];
+  S.rows = rows; S.byEq = {};
+  for (const r of rows) (S.byEq[r.eq] ||= []).push(r);
+  S.equips = Object.keys(S.byEq).sort();
+  S.times = [...new Set(rows.map(r=>r.t))].sort((a,b)=>a-b);
+  if (!S.sel || !S.byEq[S.sel]) S.sel = S.equips[0];
+  if (S.mode==='live' || wasAtEnd) S.cursor = S.times.length-1;
+  else if (prevT!=null){ const i=S.times.findIndex(t=>t>=prevT); S.cursor = i<0? S.times.length-1 : i; }
+  else S.cursor = Math.min(S.times.length-1, Math.max(0, Math.min(S.win, S.times.length)-1));
+  S.source = source;
+  buildEquipNav(); render();
+}
+
+/* ===== 데이터 수집 ===== */
+let fetchTimer=null;
+async function fetchSheet(){
+  try{
+    const res = await fetch(CONFIG.CSV_URL + '&_=' + Date.now(), {cache:'no-store'});
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const rows = parseCSV(await res.text());
+    S.fetchedAt = new Date();
+    $('banner').hidden = true;
+    load(rows, 'sheet');
+  }catch(e){
+    if (S.source==='sheet'){ setSrc('warn', '시트 갱신 실패 · 마지막 데이터 유지'); return; }
+    if (S.source==='file') return;
+    $('bannerText').textContent = 'Google 시트에 연결하지 못해 예시 데이터(P-01, 99분)로 표시 중입니다. 인터넷 연결과 시트의 "웹에 게시" 설정을 확인하거나, CSV 파일을 직접 여세요. ('+e.message+')';
+    $('banner').hidden = false;
+    load(parseCSV(SAMPLE), 'sample');
+  }
+}
+function scheduleFetch(){ clearInterval(fetchTimer); fetchTimer = setInterval(fetchSheet, S.refresh*1000); }
+function setSrc(kind, text){ $('srcDot').className = 'dot '+kind+(kind==='ok'?' live':''); $('srcText').textContent = text; }
+
+/* ===== 판정 ===== */
+function level(k, v){
+  const m = CONFIG.METRICS[k]; if (v==null) return 0;
+  if ((m.hi && v>=m.hi.alarm) || (m.lo && v<=m.lo.alarm)) return 2;
+  if ((m.hi && v>=m.hi.warn)  || (m.lo && v<=m.lo.warn))  return 1;
+  return 0;
+}
+function statusInfo(code){ return CONFIG.STATUS[code] || {k:'idle', t:code||'미상'}; }
+function health(r){
+  if (!r) return 0;
+  let h = 100;
+  for (const k of KEYS){ const l=level(k,r[k]); h -= l===2?30:l===1?12:0; }
+  const s = statusInfo(r.status).k;
+  if (s==='alarm') h -= 30; else if (s==='warn') h -= 10;
+  return Math.max(0, Math.min(100, h));
+}
+function rowState(r){
+  const s = statusInfo(r.status).k;
+  const lv = Math.max(...KEYS.map(k=>level(k,r[k])));
+  if (s==='alarm' || lv===2) return 'alarm';
+  if (s==='idle') return 'idle';
+  if (s==='warn' || lv===1) return 'warn';
+  return 'ok';
+}
+function windowRows(eq){
+  const arr = S.byEq[eq]||[]; const tEnd = S.times[S.cursor];
+  let hi = arr.length-1;
+  { let lo=0, h=arr.length-1, ans=-1; while(lo<=h){const mid=(lo+h)>>1; if(arr[mid].t<=tEnd){ans=mid;lo=mid+1;} else h=mid-1;} hi=ans; }
+  if (hi<0) return [];
+  return arr.slice(Math.max(0, hi-S.win+1), hi+1);
+}
+const fmtT = t => { const d=new Date(t); const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fmtHM = t => { const d=new Date(t); const p=n=>String(n).padStart(2,'0'); return `${p(d.getHours())}:${p(d.getMinutes())}`; };
+const fmt = (k,v) => v==null ? '–' : v.toFixed(CONFIG.METRICS[k].dec);
+
+/* ===== SVG 도우미 ===== */
+const NS='http://www.w3.org/2000/svg';
+function polar(cx,cy,r,deg){ const a=(deg-90)*Math.PI/180; return [cx+r*Math.cos(a), cy+r*Math.sin(a)]; }
+function arc(cx,cy,r,a0,a1){ const [x0,y0]=polar(cx,cy,r,a0),[x1,y1]=polar(cx,cy,r,a1); return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1-a0>180?1:0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
+
+function gaugeSVG(k, v){
+  const m=CONFIG.METRICS[k], A0=-130, A1=130, cx=75, cy=70, r=54;
+  const ang = x => A0 + (Math.max(m.min,Math.min(m.max,x))-m.min)/(m.max-m.min)*(A1-A0);
+  let s = `<svg viewBox="0 0 150 112" aria-hidden="true">`;
+  s += `<path d="${arc(cx,cy,r,A0,A1)}" stroke="${CV('--line')}" stroke-width="10" fill="none" stroke-linecap="butt"/>`;
+  const band=(a,b,c)=>{ if (b>a) s+=`<path d="${arc(cx,cy,r+9,ang(a),ang(b))}" stroke="${CV(c)}" stroke-width="3" fill="none"/>`; };
+  if (m.lo){ band(m.min, m.lo.alarm, '--alarm'); band(m.lo.alarm, m.lo.warn, '--warn'); }
+  if (m.hi){ band(m.hi.warn, m.hi.alarm, '--warn'); band(m.hi.alarm, m.max, '--alarm'); }
+  if (v!=null){
+    const l=level(k,v), c=CV(l===2?'--alarm':l===1?'--warn':'--accent');
+    s += `<path d="${arc(cx,cy,r,A0,Math.max(A0+1,ang(v)))}" stroke="${c}" stroke-width="10" fill="none"/>`;
+    const [nx,ny]=polar(cx,cy,r-14,ang(v));
+    s += `<line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${CV('--fg')}" stroke-width="2" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="4" fill="${CV('--fg')}"/>`;
+  }
+  const [lx,ly]=polar(cx,cy,r,A0),[rx,ry]=polar(cx,cy,r,A1);
+  s += `<text x="${lx.toFixed(0)}" y="${(ly+16).toFixed(0)}" fill="${CV('--muted')}" font-size="10" text-anchor="middle" font-family="IBM Plex Mono,monospace">${m.min}</text>`;
+  s += `<text x="${rx.toFixed(0)}" y="${(ry+16).toFixed(0)}" fill="${CV('--muted')}" font-size="10" text-anchor="middle" font-family="IBM Plex Mono,monospace">${m.max}</text>`;
+  return s+'</svg>';
+}
+
+function ringSVG(h){
+  const c = h>=80?'--ok':h>=50?'--warn':'--alarm';
+  const R=62, C=2*Math.PI*R;
+  return `<circle cx="75" cy="75" r="${R}" stroke="${CV('--line')}" stroke-width="12" fill="none"/>
+  <circle cx="75" cy="75" r="${R}" stroke="${CV(c)}" stroke-width="12" fill="none" stroke-dasharray="${(C*h/100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 75 75)" stroke-linecap="round"/>
+  <text x="75" y="80" text-anchor="middle" fill="${CV('--fg')}" font-size="34" font-weight="600" font-family="IBM Plex Mono,monospace">${Math.round(h)}</text>
+  <text x="75" y="100" text-anchor="middle" fill="${CV('--muted')}" font-size="11" font-family="IBM Plex Sans KR,sans-serif">/ 100</text>`;
+}
+
+function trendSVG(svg, k, rows){
+  const W = Math.max(200, svg.clientWidth||400), H = 130, pl=42, pr=10, pt=8, pb=20;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const m=CONFIG.METRICS[k], vals=rows.map(r=>r[k]).filter(v=>v!=null);
+  if (!vals.length){ svg.innerHTML=''; return; }
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  const pad=Math.max((hi-lo)*0.15, Math.abs(hi)*0.01, 0.01); lo-=pad; hi+=pad;
+  const x=i=>pl+(rows.length<=1?0:i/(rows.length-1))*(W-pl-pr);
+  const y=v=>pt+(1-(v-lo)/(hi-lo))*(H-pt-pb);
+  const muted=CV('--muted'), line=CV('--line');
+  let s='';
+  for (let g=0; g<=3; g++){ const v=lo+(hi-lo)*g/3, yy=y(v);
+    s+=`<line x1="${pl}" x2="${W-pr}" y1="${yy.toFixed(1)}" y2="${yy.toFixed(1)}" stroke="${line}" stroke-width="1"/>`;
+    s+=`<text x="${pl-6}" y="${(yy+3.5).toFixed(1)}" fill="${muted}" font-size="10" text-anchor="end" font-family="IBM Plex Mono,monospace">${v.toFixed(m.dec===0?0:m.dec===1?1:2)}</text>`; }
+  const th=(v,c,dash)=>{ if (v>lo && v<hi){ const yy=y(v).toFixed(1); s+=`<line x1="${pl}" x2="${W-pr}" y1="${yy}" y2="${yy}" stroke="${CV(c)}" stroke-width="1.2" ${dash?'stroke-dasharray="4 4"':''}/>`; } };
+  if (m.hi){ th(m.hi.warn,'--warn',1); th(m.hi.alarm,'--alarm',0); }
+  if (m.lo){ th(m.lo.warn,'--warn',1); th(m.lo.alarm,'--alarm',0); }
+  let d='';
+  rows.forEach((r,i)=>{ if (r[k]==null) return; d+=(d?'L':'M')+x(i).toFixed(1)+' '+y(r[k]).toFixed(1); });
+  const acc=CV('--accent');
+  s+=`<path d="${d} L${x(rows.length-1).toFixed(1)} ${H-pb} L${x(0).toFixed(1)} ${H-pb} Z" fill="${acc}" fill-opacity="0.10"/>`;
+  s+=`<path d="${d}" stroke="${acc}" stroke-width="1.6" fill="none" stroke-linejoin="round"/>`;
+  rows.forEach((r,i)=>{ const l=level(k,r[k]); if (l) s+=`<circle cx="${x(i).toFixed(1)}" cy="${y(r[k]).toFixed(1)}" r="2.6" fill="${CV(l===2?'--alarm':'--warn')}"/>`; });
+  const last=rows[rows.length-1];
+  if (last[k]!=null) s+=`<circle cx="${x(rows.length-1).toFixed(1)}" cy="${y(last[k]).toFixed(1)}" r="4" fill="${acc}" stroke="${CV('--panel2')}" stroke-width="2"/>`;
+  s+=`<text x="${pl}" y="${H-5}" fill="${muted}" font-size="10" font-family="IBM Plex Mono,monospace">${fmtHM(rows[0].t)}</text>`;
+  s+=`<text x="${W-pr}" y="${H-5}" fill="${muted}" font-size="10" text-anchor="end" font-family="IBM Plex Mono,monospace">${fmtHM(last.t)}</text>`;
+  svg.innerHTML=s;
+}
+
+/* ===== 렌더 ===== */
+function buildEquipNav(){
+  const nav=$('equips'); nav.innerHTML='';
+  if (S.equips.length<2){ nav.hidden=true; return; }
+  nav.hidden=false;
+  for (const e of S.equips){
+    const b=document.createElement('button'); b.className='eq'; b.dataset.eq=e;
+    b.innerHTML=`<i class="dot"></i><b></b><span></span>`; b.querySelector('b').textContent=e;
+    b.onclick=()=>{ S.sel=e; render(); };
+    nav.appendChild(b);
+  }
+}
+function buildStatic(){
+  const g=$('gauges'), t=$('trends');
+  for (const k of KEYS){
+    const m=CONFIG.METRICS[k];
+    g.insertAdjacentHTML('beforeend', `<div class="g" id="g_${k}"><div class="t"><span>${m.label}</span><span class="lv"></span></div><div class="svgbox" style="width:100%;display:grid;justify-items:center"></div><span class="v num">–</span><span class="u">${m.unit}</span><span class="z num">σ –</span></div>`);
+    t.insertAdjacentHTML('beforeend', `<div class="tr"><div class="h"><span>${m.label} <span class="num">(${m.unit})</span></span><b class="num" id="tv_${k}">–</b></div><svg id="ts_${k}" role="img" aria-label="${m.label} 추세"></svg></div>`);
+  }
+}
+function stats(rows,k){ const v=rows.map(r=>r[k]).filter(x=>x!=null); if (v.length<5) return null; const mu=v.reduce((a,b)=>a+b,0)/v.length; const sd=Math.sqrt(v.reduce((a,b)=>a+(b-mu)**2,0)/v.length); return {mu,sd}; }
+
+function render(){
+  if (!S.times.length) return;
+  const tNow=S.times[S.cursor];
+  // 소스 표시
+  if (S.source==='sheet') setSrc('ok', `시트 연결됨 · ${S.fetchedAt?fmtHM(S.fetchedAt):''} 수신 · ${S.rows.length.toLocaleString()}행`);
+  else if (S.source==='file') setSrc('ok', `CSV 파일 · ${S.rows.length.toLocaleString()}행`);
+  else if (S.source==='sample') setSrc('warn', '예시 데이터');
+
+  // 설비별 최신값
+  const latest={}, wins={};
+  for (const e of S.equips){ wins[e]=windowRows(e); latest[e]=wins[e][wins[e].length-1]||null; }
+  const present=S.equips.filter(e=>latest[e]);
+
+  // KPI
+  const running=present.filter(e=>statusInfo(latest[e].status).k==='ok').length;
+  $('kRun').textContent=`${running} / ${present.length}`;
+  $('kRunBar').style.width=(present.length?running/present.length*100:0)+'%';
+  $('kRunBar').style.background=CV('--ok');
+  let a2=0,a1=0; for (const e of present) for (const k of KEYS){ const l=level(k,latest[e][k]); if(l===2)a2++; else if(l===1)a1++; }
+  $('kAlarm').innerHTML=`<span style="color:${a2?CV('--alarm'):CV('--fg')}">${a2}</span> · <span style="color:${a1?CV('--warn'):CV('--fg')}">${a1}</span>`;
+  $('kAlarmS').textContent = a2||a1 ? '기준 초과 항목 수 (경보 · 주의)' : '모든 항목 정상 범위';
+  const hs=present.map(e=>health(latest[e])), havg=hs.length?hs.reduce((a,b)=>a+b,0)/hs.length:0;
+  $('kHealth').textContent=Math.round(havg);
+  $('kHealthBar').style.width=havg+'%'; $('kHealthBar').style.background=CV(havg>=80?'--ok':havg>=50?'--warn':'--alarm');
+  let vmax=null,veq='–'; for (const e of present){ const v=latest[e].vib; if (v!=null && (vmax==null||v>vmax)){vmax=v;veq=e;} }
+  $('kVib').textContent=vmax==null?'–':vmax.toFixed(2);
+  $('kVib').style.color=CV(vmax!=null&&level('vib',vmax)===2?'--alarm':vmax!=null&&level('vib',vmax)===1?'--warn':'--fg');
+  $('kVibS').textContent=`mm/s · ${veq}`;
+  $('kTime').textContent=fmtT(tNow);
+  $('kTimeS').textContent = S.mode==='live' ? '최신 수신 데이터' : `기록 재생 ${S.cursor+1} / ${S.times.length}${S.paused?' · 일시정지':''}`;
+
+  // 설비 버튼
+  document.querySelectorAll('.eq').forEach(b=>{
+    const r=latest[b.dataset.eq]; b.setAttribute('aria-pressed', b.dataset.eq===S.sel);
+    b.querySelector('.dot').className='dot '+(r?rowState(r):'');
+    b.querySelector('span').textContent= r? `${statusInfo(r.status).t} · ${health(r)}` : '데이터 없음';
+  });
+
+  // 선택 설비
+  const rows=wins[S.sel]||[], cur=rows[rows.length-1];
+  $('selTitle').textContent=`${S.sel} 계측값`;
+  $('selTime').textContent= cur? fmtT(cur.t) : '해당 시각 데이터 없음';
+  $('winLabel').textContent= rows.length? `${fmtHM(rows[0].t)}–${fmtHM(cur.t)} · ${rows.length}점` : '–';
+  for (const k of KEYS){
+    const box=$('g_'+k), v=cur?cur[k]:null, l=level(k,v);
+    box.className='g'+(l?' l'+l:'');
+    box.querySelector('.svgbox').innerHTML=gaugeSVG(k,v);
+    box.querySelector('.v').textContent=fmt(k,v);
+    box.querySelector('.v').style.color=CV(l===2?'--alarm':l===1?'--warn':'--fg');
+    box.querySelector('.lv').textContent= l===2?'경보':l===1?'주의':'정상';
+    box.querySelector('.lv').style.color=CV(l===2?'--alarm':l===1?'--warn':'--ok');
+    const st=stats(rows,k), z=box.querySelector('.z');
+    if (st && v!=null && st.sd>0){ const zz=(v-st.mu)/st.sd; z.textContent=`σ ${zz>=0?'+':''}${zz.toFixed(1)} · 평균 ${st.mu.toFixed(CONFIG.METRICS[k].dec)}`; z.classList.toggle('hot', Math.abs(zz)>=3); if(Math.abs(zz)>=3) z.textContent+=' · 통계 이상'; }
+    else { z.textContent='σ –'; z.classList.remove('hot'); }
+    $('tv_'+k).textContent=fmt(k,v);
+    trendSVG($('ts_'+k), k, rows);
+  }
+  const h=health(cur); $('ring').innerHTML=ringSVG(h);
+  const si=cur?statusInfo(cur.status):{k:'idle',t:'–'}, sc=CV(COL[si.k]);
+  const sb=$('statusBig'); sb.textContent= cur? `${si.t} (${cur.status})` : '데이터 없음';
+  sb.style.background=`color-mix(in srgb, ${sc} 22%, transparent)`; sb.style.color=sc;
+  // 상태 이력 스트립 (최대 120칸으로 묶음)
+  const strip=$('strip'); strip.innerHTML='';
+  const bins=Math.min(120, rows.length), per=rows.length/bins, rank={ok:0,idle:1,warn:2,alarm:3};
+  for (let b=0;b<bins;b++){
+    const seg=rows.slice(Math.floor(b*per), Math.floor((b+1)*per)||Math.floor(b*per)+1);
+    let worst='ok'; for (const r of seg){ const st=rowState(r); if (rank[st]>rank[worst]) worst=st; }
+    const i=document.createElement('i'); i.style.background=CV(COL[worst]); i.title=`${fmtHM(seg[0].t)} ${worst}`; strip.appendChild(i);
+  }
+
+  // 전체 표
+  const tb=$('tbody'); tb.innerHTML='';
+  for (const e of S.equips){
+    const r=latest[e], tr=document.createElement('tr');
+    tr.onclick=()=>{ S.sel=e; render(); window.scrollTo({top:0,behavior:'smooth'}); };
+    if (!r){ tr.innerHTML=`<td class="num">${e}</td><td colspan="7" style="text-align:left;color:${CV('--muted')}">해당 시각 데이터 없음</td>`; tb.appendChild(tr); continue; }
+    const s=statusInfo(r.status), c=CV(COL[s.k]);
+    let html=`<td class="num"><b>${e}</b></td><td><span class="pill" style="background:color-mix(in srgb,${c} 22%,transparent);color:${c}">${s.t}</span></td>`;
+    for (const k of KEYS){ const l=level(k,r[k]); html+=`<td class="num ${l?'c'+l:''}">${fmt(k,r[k])}</td>`; }
+    const hh=health(r); html+=`<td class="num" style="color:${CV(hh>=80?'--ok':hh>=50?'--warn':'--alarm')}">${hh}</td>`;
+    tr.innerHTML=html; if (e===S.sel) tr.style.background=CV('--panel2'); tb.appendChild(tr);
+  }
+
+  // 이벤트 로그
+  const ev=[];
+  for (const e of S.equips){
+    const w=wins[e]; let prev=null;
+    for (const r of w){
+      if (prev){
+        if (r.status!==prev.status) ev.push({t:r.t,e,k:statusInfo(r.status).k==='alarm'?'alarm':'idle',m:`상태 변경 ${prev.status} → ${r.status}`});
+        for (const k of KEYS){ const l0=level(k,prev[k]), l1=level(k,r[k]);
+          if (l1>l0) ev.push({t:r.t,e,k:l1===2?'alarm':'warn',m:`${CONFIG.METRICS[k].label} ${l1===2?'경보':'주의'} ${fmt(k,r[k])} ${CONFIG.METRICS[k].unit}`});
+          else if (l1===0 && l0>0) ev.push({t:r.t,e,k:'ok',m:`${CONFIG.METRICS[k].label} 정상 복귀`}); }
+      }
+      prev=r;
+    }
+  }
+  ev.sort((a,b)=>b.t-a.t);
+  const log=$('log'); log.innerHTML='';
+  if (!ev.length){ log.innerHTML=`<span class="empty">표시 구간에 기준 초과나 상태 변경이 없습니다.</span>`; }
+  for (const x of ev.slice(0,40)){
+    const d=document.createElement('div');
+    d.innerHTML=`<time class="num">${fmtHM(x.t)}</time><span class="pill num" style="background:color-mix(in srgb,${CV(COL[x.k])} 22%,transparent);color:${CV(COL[x.k])}"></span><span></span>`;
+    d.children[1].textContent=x.e; d.children[2].textContent=x.m; log.appendChild(d);
+  }
+}
+
+/* ===== 재생 루프 ===== */
+let playTimer=null;
+function schedulePlay(){
+  clearInterval(playTimer);
+  if (S.mode!=='play' || S.paused) return;
+  playTimer=setInterval(()=>{
+    if (S.cursor < S.times.length-1){ S.cursor++; render(); }
+    else { S.cursor = Math.min(S.times.length-1, Math.max(0, S.win-1)); render(); } // 끝나면 처음부터 반복
+  }, 1000/S.speed);
+}
+function setMode(m){
+  S.mode=m; $('mLive').setAttribute('aria-pressed', m==='live'); $('mPlay').setAttribute('aria-pressed', m==='play');
+  $('speed').disabled = $('btnPause').disabled = m==='live';
+  if (m==='live') S.cursor=S.times.length-1;
+  schedulePlay(); render();
+}
+
+/* ===== 이벤트 ===== */
+$('mLive').onclick=()=>setMode('live');
+$('mPlay').onclick=()=>setMode('play');
+$('btnPause').onclick=()=>{ S.paused=!S.paused; $('btnPause').textContent=S.paused?'재생':'일시정지'; schedulePlay(); render(); };
+$('speed').onchange=e=>{ S.speed=+e.target.value; schedulePlay(); };
+$('win').onchange=e=>{ S.win=+e.target.value; render(); };
+$('refresh').onchange=e=>{ S.refresh=+e.target.value; scheduleFetch(); };
+$('btnRetry').onclick=()=>{ S.source='none'; fetchSheet(); };
+$('file').onchange=async e=>{
+  const f=e.target.files[0]; if (!f) return;
+  try{ const rows=parseCSV(await f.text()); $('banner').hidden=true; S.times=[]; load(rows,'file'); }
+  catch(err){ $('bannerText').textContent='CSV를 읽지 못했습니다: '+err.message; $('banner').hidden=false; }
+};
+let rz; addEventListener('resize', ()=>{ clearTimeout(rz); rz=setTimeout(render,150); });
+
+/* ===== 시작 ===== */
+buildStatic();
+setMode('play');
+fetchSheet().then(scheduleFetch);
+</script>
+</body>
+</html>
